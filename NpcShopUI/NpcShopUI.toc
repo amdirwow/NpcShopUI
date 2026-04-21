@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: NpcShop UI
+## Notes: Vendor-like UI for mod-npc-shop (fallback gossip remains)
+## Author: Amdir
+## Version: 1.0.0
+## SavedVariables: DidPanasNpcShopUI_DB, LegacyRaidsNpcShopUI_DB
+
+NpcShopUI.lua
+LegacyRaidsUI.lua
