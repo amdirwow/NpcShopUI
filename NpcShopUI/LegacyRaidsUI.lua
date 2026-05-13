@@ -506,6 +506,25 @@ local function MakeBossKey(mapId, bossEntry)
     return tostring(mapId) .. ":" .. tostring(bossEntry)
 end
 
+local function ShouldShowLootBoss(mapId, bossEntry)
+    if mapId == 580 and bossEntry == 25741 then
+        return false
+    end
+
+    return true
+end
+
+local function GetVisibleLootBossOrder(mapId)
+    local visible = {}
+    for _, bossEntry in ipairs(LR.loot.bossOrderByMap[mapId] or {}) do
+        if ShouldShowLootBoss(mapId, bossEntry) then
+            visible[#visible + 1] = bossEntry
+        end
+    end
+
+    return visible
+end
+
 local function RenderLoot()
     lootFrame.title:SetText("LegacyRaids")
     lootFrame.subtitle:SetText("Бонусний лут і емблеми")
@@ -525,8 +544,8 @@ local function RenderLoot()
             value = mapId,
             selected = mapId == LR.loot.selectedMapId,
             onSelect = function(value)
+                local bossOrder = GetVisibleLootBossOrder(value)
                 LR.loot.selectedMapId = value
-                local bossOrder = LR.loot.bossOrderByMap[value] or {}
                 LR.loot.selectedBossEntry = bossOrder[1] or 0
                 RenderLoot()
             end,
@@ -534,8 +553,9 @@ local function RenderLoot()
     end
     SetListData(lootMaps, mapRows)
 
+    local visibleBossOrder = GetVisibleLootBossOrder(LR.loot.selectedMapId)
     local bossRows = {}
-    for _, bossEntry in ipairs(LR.loot.bossOrderByMap[LR.loot.selectedMapId] or {}) do
+    for _, bossEntry in ipairs(visibleBossOrder) do
         local bossData = LR.loot.bossesByMap[LR.loot.selectedMapId] and LR.loot.bossesByMap[LR.loot.selectedMapId][bossEntry]
         bossRows[#bossRows + 1] = {
             text = bossData and bossData.name or ("Бос " .. tostring(bossEntry)),
@@ -741,7 +761,7 @@ local function HandlePayload(payload)
             LR.loot.selectedMapId = LR.loot.mapOrder[1]
         end
 
-        local bossOrder = LR.loot.bossOrderByMap[LR.loot.selectedMapId] or {}
+        local bossOrder = GetVisibleLootBossOrder(LR.loot.selectedMapId)
         if LR.loot.selectedBossEntry == 0 and #bossOrder > 0 then
             LR.loot.selectedBossEntry = bossOrder[1]
         end
