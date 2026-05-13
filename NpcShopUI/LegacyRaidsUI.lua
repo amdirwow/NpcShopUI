@@ -507,7 +507,7 @@ local function MakeBossKey(mapId, bossEntry)
 end
 
 local function ShouldShowLootBoss(mapId, bossEntry)
-    if mapId == 580 and bossEntry == 25741 then
+    if mapId == 580 and (bossEntry == 24892 or bossEntry == 25741) then
         return false
     end
 
