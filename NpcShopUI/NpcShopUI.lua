@@ -6,6 +6,7 @@ local NS = {
     totalPages = 1,
     balance = 0,
     allowPreview = false,
+    searchQuery = "",
     items = {},
 }
 
@@ -264,8 +265,26 @@ pager.next:SetPoint("RIGHT", 0, 0)
 pager.next:SetText("Далі >")
 
 local grid = CreateFrame("Frame", nil, shopFrame)
-grid:SetPoint("TOPLEFT", 18, -78)
 grid:SetSize(414, 412)
+
+local emptySearchText = grid:CreateFontString(nil, "OVERLAY", "GameFontDisableLarge")
+emptySearchText:SetPoint("CENTER", grid, "CENTER", 0, 18)
+emptySearchText:SetText("Нічого не знайдено")
+emptySearchText:Hide()
+
+local searchBox = CreateFrame("EditBox", nil, shopFrame, "InputBoxTemplate")
+searchBox:SetPoint("TOPLEFT", 26, -80)
+searchBox:SetSize(310, 24)
+searchBox:SetAutoFocus(false)
+searchBox:SetMaxLetters(60)
+local searchBoxUpdating = false
+
+local searchBtn = CreateFrame("Button", nil, shopFrame, "UIPanelButtonTemplate")
+searchBtn:SetSize(84, 22)
+searchBtn:SetPoint("LEFT", searchBox, "RIGHT", 8, 0)
+searchBtn:SetText("Пошук")
+searchBox:Hide()
+searchBtn:Hide()
 
 local COLS = 3
 local ROWS = 3
@@ -289,6 +308,34 @@ local function HideTooltip()
     GameTooltip:Hide()
 end
 
+local function ClampQuantity(quantity)
+    quantity = tonumber(quantity) or 1
+    if quantity < 1 then
+        return 1
+    end
+    if quantity > 99 then
+        return 99
+    end
+    return math.floor(quantity)
+end
+
+local function UpdateCellQuantity(cell, quantity)
+    if not cell or not cell.item then
+        return
+    end
+
+    local item = cell.item
+    item.quantity = ClampQuantity(quantity)
+    local totalCount = (item.count or 1) * item.quantity
+    local totalPrice = (item.price or 0) * item.quantity
+
+    cell.qtyInput.updating = true
+    cell.qtyInput:SetText(tostring(item.quantity))
+    cell.qtyInput.updating = false
+    cell.count:SetText("К-сть: x" .. totalCount)
+    cell.price:SetText(string.format("Ціна: %s %d", TOKEN_ICON, totalPrice))
+end
+
 local function ConfirmBuy(item)
     if not item then
         return
@@ -305,9 +352,17 @@ local function ConfirmBuy(item)
     }
 
     local dlg = StaticPopupDialogs["NSHOP_CONFIRM_BUY"]
-    dlg.text = string.format("Придбати предмет за %s %d?", TOKEN_ICON, item.price)
+    local quantity = ClampQuantity(item.quantity)
+    local totalPrice = (item.price or 0) * quantity
+    dlg.text = string.format("Придбати x%d за %s %d?", quantity, TOKEN_ICON, totalPrice)
     dlg.OnAccept = function()
-        SendToServer(string.format("BUY\t%s\t%d\t%d\t%d", NS.kind, NS.contextId, item.listIndex, NS.page))
+        if NS.kind == "search" then
+            SendToServer(string.format("SBUY\t%s\t%d\t%d\t%d\t%d\t%s",
+                item.buyKind or "", item.buyContextId or 0, item.buyListIndex or item.listIndex or 0,
+                NS.page or 1, quantity, NS.searchQuery or ""))
+        else
+            SendToServer(string.format("BUY\t%s\t%d\t%d\t%d\t%d", NS.kind, NS.contextId, item.listIndex, NS.page, quantity))
+        end
     end
 
     StaticPopup_Show("NSHOP_CONFIRM_BUY")
@@ -356,13 +411,35 @@ for i = 1, (COLS * ROWS) do
     cell.price:SetPoint("TOP", 0, -92)
 
     cell.buy = CreateFrame("Button", nil, cell, "UIPanelButtonTemplate")
-    cell.buy:SetSize(68, 20)
-    cell.buy:SetPoint("BOTTOM", -8, 6)
+    cell.buy:SetSize(55, 20)
+    cell.buy:SetPoint("BOTTOMRIGHT", -7, 6)
     cell.buy:SetText("Купити")
+
+    cell.minus = CreateFrame("Button", nil, cell, "UIPanelButtonTemplate")
+    cell.minus:SetSize(16, 20)
+    cell.minus:SetPoint("BOTTOMLEFT", 6, 6)
+    cell.minus:SetText("-")
+
+    cell.qtyInput = CreateFrame("EditBox", nil, cell)
+    cell.qtyInput:SetPoint("LEFT", cell.minus, "RIGHT", 1, 0)
+    cell.qtyInput:SetSize(22, 20)
+    cell.qtyInput:SetAutoFocus(false)
+    cell.qtyInput:SetMaxLetters(2)
+    if cell.qtyInput.SetNumeric then
+        cell.qtyInput:SetNumeric(true)
+    end
+    cell.qtyInput:SetFontObject(GameFontHighlight)
+    cell.qtyInput:SetJustifyH("CENTER")
+    cell.qtyInput:SetText("1")
+
+    cell.plus = CreateFrame("Button", nil, cell, "UIPanelButtonTemplate")
+    cell.plus:SetSize(16, 20)
+    cell.plus:SetPoint("LEFT", cell.qtyInput, "RIGHT", 1, 0)
+    cell.plus:SetText("+")
 
     cell.preview = CreateFrame("Button", nil, cell)
     cell.preview:SetSize(18, 18)
-    cell.preview:SetPoint("BOTTOMRIGHT", -8, 9)
+    cell.preview:SetPoint("BOTTOMRIGHT", -8, 32)
     cell.preview.icon = cell.preview:CreateTexture(nil, "ARTWORK")
     cell.preview.icon:SetAllPoints()
     cell.preview.icon:SetTexture("Interface\\Icons\\INV_Misc_Spyglass_03")
@@ -386,6 +463,49 @@ for i = 1, (COLS * ROWS) do
     cell.buy:SetScript("OnLeave", HideTooltip)
     cell.buy:SetScript("OnClick", function()
         ConfirmBuy(cell.item)
+    end)
+    cell.minus:SetScript("OnClick", function()
+        if cell.item then
+            UpdateCellQuantity(cell, (cell.item.quantity or 1) - 1)
+        end
+    end)
+    cell.plus:SetScript("OnClick", function()
+        if cell.item then
+            UpdateCellQuantity(cell, (cell.item.quantity or 1) + 1)
+        end
+    end)
+    cell.qtyInput:SetScript("OnTextChanged", function(self)
+        if self.updating or not cell.item then
+            return
+        end
+
+        local text = self:GetText() or ""
+        if text == "" then
+            return
+        end
+
+        UpdateCellQuantity(cell, text)
+    end)
+    cell.qtyInput:SetScript("OnEnterPressed", function(self)
+        if cell.item then
+            UpdateCellQuantity(cell, self:GetText())
+        end
+        self:ClearFocus()
+    end)
+    cell.qtyInput:SetScript("OnEscapePressed", function(self)
+        if cell.item then
+            UpdateCellQuantity(cell, cell.item.quantity or 1)
+        end
+        self:ClearFocus()
+    end)
+    cell.qtyInput:SetScript("OnEditFocusGained", function(self)
+        self:HighlightText()
+    end)
+    cell.qtyInput:SetScript("OnEditFocusLost", function(self)
+        if cell.item and (self:GetText() or "") == "" then
+            UpdateCellQuantity(cell, 1)
+        end
+        self:HighlightText(0, 0)
     end)
 
     slots[i] = cell
@@ -565,6 +685,24 @@ local function RefreshShop()
     shopFrame.hint:SetText("Покупка перевіряється на сервері")
     pager.info:SetText(string.format("Сторінка %d / %d", NS.page or 1, NS.totalPages or 1))
 
+    grid:ClearAllPoints()
+    if NS.kind == "search" then
+        shopFrame:SetHeight(600)
+        searchBox:Show()
+        searchBtn:Show()
+        grid:SetPoint("TOPLEFT", 18, -112)
+        if (NS.searchQuery or "") == "" then
+            shopFrame.hint:SetText("Введіть запит і натисніть Enter")
+        else
+            shopFrame.hint:SetText("Показано тільки знайдені товари")
+        end
+    else
+        shopFrame:SetHeight(560)
+        searchBox:Hide()
+        searchBtn:Hide()
+        grid:SetPoint("TOPLEFT", 18, -78)
+    end
+
     if (NS.page or 1) > 1 then
         pager.prev:Enable()
     else
@@ -577,6 +715,19 @@ local function RefreshShop()
         pager.next:Disable()
     end
 
+    if searchBox:GetText() ~= (NS.searchQuery or "") then
+        searchBoxUpdating = true
+        searchBox:SetText(NS.searchQuery or "")
+        searchBox:SetCursorPosition(string.len(NS.searchQuery or ""))
+        searchBoxUpdating = false
+    end
+
+    if NS.kind == "search" and (NS.searchQuery or "") ~= "" and #NS.items == 0 then
+        emptySearchText:Show()
+    else
+        emptySearchText:Hide()
+    end
+
     for i = 1, #slots do
         local cell = slots[i]
         local item = NS.items[i]
@@ -585,16 +736,19 @@ local function RefreshShop()
             texture = texture or GetItemIcon(item.itemId)
             cell.item = item
             cell.itemId = item.itemId
+            item.quantity = ClampQuantity(item.quantity)
             cell.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
             local shownName = itemName or item.displayName or ("ID " .. item.itemId)
             cell.name:SetText(ShortName(shownName, 24))
-            cell.count:SetText("К-сть: x" .. item.count)
-            cell.price:SetText(string.format("Ціна: %s %d", TOKEN_ICON, item.price))
+            UpdateCellQuantity(cell, item.quantity)
             if NS.allowPreview then
                 cell.preview:Show()
             else
                 cell.preview:Hide()
             end
+            cell.minus:Show()
+            cell.qtyInput:Show()
+            cell.plus:Show()
             cell:Show()
         else
             cell.item = nil
@@ -603,7 +757,11 @@ local function RefreshShop()
             cell.name:SetText("")
             cell.count:SetText("")
             cell.price:SetText("")
+            cell.qtyInput:SetText("1")
             cell.preview:Hide()
+            cell.minus:Hide()
+            cell.qtyInput:Hide()
+            cell.plus:Hide()
             cell:Hide()
         end
     end
@@ -710,12 +868,39 @@ end
 
 pager.prev:SetScript("OnClick", function()
     local p = math.max(1, (NS.page or 1) - 1)
-    SendToServer(string.format("NAV\t%s\t%d\t%d", NS.kind, NS.contextId, p))
+    if NS.kind == "search" then
+        SendToServer(string.format("SEARCH\t%d\t%s", p, NS.searchQuery or ""))
+    else
+        SendToServer(string.format("NAV\t%s\t%d\t%d", NS.kind, NS.contextId, p))
+    end
 end)
 
 pager.next:SetScript("OnClick", function()
     local p = math.min(NS.totalPages or 1, (NS.page or 1) + 1)
-    SendToServer(string.format("NAV\t%s\t%d\t%d", NS.kind, NS.contextId, p))
+    if NS.kind == "search" then
+        SendToServer(string.format("SEARCH\t%d\t%s", p, NS.searchQuery or ""))
+    else
+        SendToServer(string.format("NAV\t%s\t%d\t%d", NS.kind, NS.contextId, p))
+    end
+end)
+
+local function SubmitSearch()
+    local query = Trim(searchBox:GetText() or "")
+    NS.searchQuery = query
+    SendToServer("SEARCH\t1\t" .. query)
+end
+
+searchBtn:SetScript("OnClick", SubmitSearch)
+searchBox:SetScript("OnEnterPressed", function(self)
+    SubmitSearch()
+    self:ClearFocus()
+end)
+searchBox:SetScript("OnTextChanged", function(self)
+    if searchBoxUpdating then
+        return
+    end
+
+    NS.searchQuery = Trim(self:GetText() or "")
 end)
 
 transferPanel.nameInput:SetScript("OnTextChanged", function(self)
@@ -818,6 +1003,7 @@ local function HandlePayload(payload)
         NS.totalPages = ToNumber(parts[5], 1)
         NS.balance = ToNumber(parts[6], 0)
         NS.allowPreview = ToNumber(parts[7], 0) == 1
+        NS.searchQuery = parts[8] or ""
         NS.items = {}
         return
     end
@@ -830,6 +1016,9 @@ local function HandlePayload(payload)
             price = ToNumber(parts[3], 0),
             listIndex = ToNumber(parts[5], 0),
             displayName = parts[6] or "",
+            buyKind = parts[7] or "",
+            buyContextId = ToNumber(parts[8], 0),
+            buyListIndex = ToNumber(parts[9], ToNumber(parts[5], 0)),
         }
         if item.itemId > 0 then
             NS.items[#NS.items + 1] = item
@@ -840,6 +1029,10 @@ local function HandlePayload(payload)
     if cmd == "SHOW" then
         RefreshShop()
         ShowShopFrame()
+        if NS.kind == "search" then
+            searchBox:SetFocus()
+            searchBox:HighlightText(0, 0)
+        end
         return
     end
 
