@@ -38,6 +38,7 @@ local function GetDB()
     return DidPanasNpcShopUI_DB
 end
 
+
 local function SplitTabs(s)
     local out = {}
     for token in string.gmatch(s, "([^\t]+)") do
